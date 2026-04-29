@@ -148,8 +148,25 @@
   ::-webkit-scrollbar{width:3px;}
   ::-webkit-scrollbar-track{background:var(--bg);}
   ::-webkit-scrollbar-thumb{background:rgba(0,229,255,0.15);border-radius:2px;}
+
+  /* IMPORT SECTION */
+  .import-drop{border:1px dashed rgba(0,229,255,0.25);background:rgba(0,229,255,0.02);padding:12px;text-align:center;cursor:pointer;transition:all 0.2s;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);letter-spacing:1px;position:relative;}
+  .import-drop:hover,.import-drop.drag{border-color:var(--accent);color:var(--accent);background:rgba(0,229,255,0.06);}
+  .import-drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+  .import-drop svg{display:block;margin:0 auto 6px;opacity:0.4;}
+  .import-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+  .import-tag{font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;padding:2px 6px;border:1px solid rgba(0,229,255,0.2);background:rgba(0,229,255,0.04);color:var(--accent);display:flex;align-items:center;gap:4px;}
+  .import-tag button{background:none;border:none;color:var(--dim);cursor:pointer;font-size:11px;line-height:1;padding:0;}
+  .import-tag button:hover{color:var(--red);}
+  .import-filter{display:flex;gap:4px;margin-top:6px;}
+  .import-filter select{flex:1;font-family:'Share Tech Mono',monospace;font-size:9px;padding:5px 6px;background:var(--bg3);border:1px solid var(--border);color:var(--text);outline:none;}
+  .import-filter select:focus{border-color:var(--accent);}
+  .import-count{font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim);margin-top:5px;letter-spacing:1px;}
+  .import-count b{color:var(--accent);}
+  .import-count span.warn{color:#ffbe00;}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -176,6 +193,22 @@
 
 <div class="app">
   <div class="sidebar">
+    <div class="sb-sect">
+      <div class="lbl">▸ IMPORTAR RECORDS.HTML</div>
+      <div class="import-drop" id="importDrop">
+        <input type="file" id="importFile" accept=".html,.xlsx,.xls" multiple onchange="handleImportFiles(this.files)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        ARRASTE OU CLIQUE PARA SELECIONAR<br><span style="color:var(--accent)">RECORDS.HTML</span> &nbsp;·&nbsp; <span style="color:#39ff14">XLSX / XLS</span>
+      </div>
+      <div class="import-tags" id="importTags"></div>
+      <div class="import-filter" id="importFilterWrap" style="display:none">
+        <select id="groupFilterSel" onchange="applyGroupFilter()">
+          <option value="all">TODOS OS GRUPOS</option>
+        </select>
+      </div>
+      <div class="import-count" id="importCount"></div>
+      <button class="btn primary" id="btnImport" onclick="importToArea()" style="display:none">⊞ CARREGAR NÚMEROS EXTRAÍDOS</button>
+    </div>
     <div class="sb-sect">
       <div class="lbl">▸ CONTAS WHATSAPP</div>
       <textarea id="numbersArea" placeholder="+5527996572965&#10;+5521998178641&#10;+557398408139&#10;..."></textarea>
@@ -265,7 +298,251 @@
   let isBusy = false;
   let pollTimer = null;
 
-  // ── POLLING ──────────────────────────────────────
+  // ── IMPORT RECORDS.HTML ──────────────────────────
+  let importedFiles = []; // [{name, groupIds:[{id, label}], phones:{groupId:[phones]}}]
+  let allExtracted = {}; // groupId -> Set of phones
+  let allGroups = {};    // groupId -> label
+
+  function handleImportFiles(files) {
+    Array.from(files).forEach(file => {
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.html')) {
+        const reader = new FileReader();
+        reader.onload = e => parseRecordsHtml(file.name, e.target.result);
+        reader.readAsText(file, 'utf-8');
+      } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        const reader = new FileReader();
+        reader.onload = e => parseXlsx(file.name, e.target.result);
+        reader.readAsArrayBuffer(file);
+      }
+    });
+    document.getElementById('importFile').value = '';
+  }
+
+  function parseXlsx(filename, arrayBuffer) {
+    const wb = XLSX.read(arrayBuffer, { type: 'arraybuffer' });
+    const phoneSet = new Set();
+    const fileKey = '_xlsx_' + filename;
+
+    wb.SheetNames.forEach(sheetName => {
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      // Detect phone columns: 'Interlocutor', 'interlocutor', or any column with mostly numeric values ≥10 digits
+      const colsToCheck = [];
+      if (rows.length > 0) {
+        Object.keys(rows[0]).forEach(col => {
+          const lower = col.toLowerCase();
+          if (lower.includes('interlocutor') || lower.includes('número') || lower.includes('numero') ||
+              lower.includes('telefone') || lower.includes('phone') || lower.includes('whatsapp') ||
+              lower.includes('conta') || lower.includes('account')) {
+            colsToCheck.push(col);
+          }
+        });
+        // If no named match, auto-detect columns with phone-like values
+        if (!colsToCheck.length) {
+          Object.keys(rows[0]).forEach(col => {
+            const sample = rows.slice(0,10).map(r => String(r[col]).replace(/\D/g,'')).filter(v => v.length >= 10);
+            if (sample.length >= 2) colsToCheck.push(col);
+          });
+        }
+      }
+
+      rows.forEach(row => {
+        colsToCheck.forEach(col => {
+          const raw = String(row[col] ?? '').trim().replace(/\s/g, '');
+          // Skip empty, headers, totals rows
+          if (!raw || raw.toLowerCase() === 'totais' || raw.toLowerCase() === 'interlocutor' || raw.toLowerCase() === 'total') return;
+          // Extract only digits
+          const digits = raw.replace(/\D/g, '');
+          if (digits.length >= 10 && digits.length <= 15) {
+            phoneSet.add('+' + digits);
+          }
+        });
+      });
+    });
+
+    // Store under a special "xlsx" key (no group filter needed for xlsx)
+    if (!allExtracted[fileKey]) allExtracted[fileKey] = new Set();
+    phoneSet.forEach(p => allExtracted[fileKey].add(p));
+    allGroups[fileKey] = '📊 ' + filename;
+
+    if (!importedFiles.find(f => f.name === filename)) {
+      importedFiles.push({ name: filename, type: 'xlsx' });
+    }
+    updateImportUI();
+  }
+
+  function parseRecordsHtml(filename, content) {
+    // Extract phones from Account Identifier, Sender, Recipients fields
+    const phoneSet = new Set();
+    const fieldRe = /(?:Account Identifier|Sender|Recipients)<div[^>]*><div>(\+?\d{7,15})/g;
+    let m;
+    while ((m = fieldRe.exec(content)) !== null) {
+      let n = m[1].replace(/\s/g,'');
+      if (!n.startsWith('+')) n = '+' + n;
+      phoneSet.add(n);
+    }
+
+    // Extract Group IDs and build map groupId -> Set<phones>
+    const groupPhones = {}; // groupId -> Set<phones>
+    // Parse entries: each "pageBreak" section is a record; we'll just map all phones to all groups in this file
+    const groupRe = /Group Id<div[^>]*><div>(\d{10,25})/g;
+    const groupsInFile = new Set();
+    while ((m = groupRe.exec(content)) !== null) {
+      groupsInFile.add(m[1]);
+    }
+    groupsInFile.forEach(gid => {
+      if (!groupPhones[gid]) groupPhones[gid] = new Set();
+      phoneSet.forEach(p => groupPhones[gid].add(p));
+    });
+
+    // Build per-record mapping by splitting on pageBreak sections
+    // More precise: for each page section, find groups and senders together
+    const pageRe = /<div[^>]*class="[^"]*pageBreak[^"]*"[^>]*>[\s\S]*?(?=<div[^>]*class="[^"]*pageBreak[^"]*"|$)/g;
+    const betterGroupPhones = {};
+    let pm;
+    while ((pm = pageRe.exec(content)) !== null) {
+      const section = pm[0];
+      const secGroups = [...section.matchAll(/Group Id<div[^>]*><div>(\d{10,25})/g)].map(x=>x[1]);
+      const secPhones = [...section.matchAll(/(?:Account Identifier|Sender|Recipients)<div[^>]*><div>(\+?\d{7,15})/g)].map(x=>{
+        let n = x[1].replace(/\s/g,'');
+        return n.startsWith('+') ? n : '+'+n;
+      });
+      secGroups.forEach(gid => {
+        if (!betterGroupPhones[gid]) betterGroupPhones[gid] = new Set();
+        secPhones.forEach(p => betterGroupPhones[gid].add(p));
+      });
+    }
+
+    // Merge: use betterGroupPhones if non-empty, else groupPhones
+    const finalMap = Object.keys(betterGroupPhones).length ? betterGroupPhones : groupPhones;
+
+    // Merge into global state
+    Object.entries(finalMap).forEach(([gid, pset]) => {
+      if (!allExtracted[gid]) allExtracted[gid] = new Set();
+      pset.forEach(p => allExtracted[gid].add(p));
+      if (!allGroups[gid]) allGroups[gid] = gid;
+    });
+    // If no groups found, put all phones under a "sem grupo" key
+    if (!Object.keys(finalMap).length && phoneSet.size) {
+      const key = '_nogroupfile_' + filename;
+      if (!allExtracted[key]) allExtracted[key] = new Set();
+      phoneSet.forEach(p => allExtracted[key].add(p));
+      allGroups[key] = filename + ' (sem grupo)';
+    }
+
+    // Register file
+    if (!importedFiles.find(f => f.name === filename)) {
+      importedFiles.push({ name: filename });
+    }
+
+    updateImportUI();
+  }
+
+  function updateImportUI() {
+    // Tags
+    const tagsEl = document.getElementById('importTags');
+    tagsEl.innerHTML = importedFiles.map(f =>
+      `<div class="import-tag"><span>${f.name}</span><button onclick="removeImportFile('${f.name}')">✕</button></div>`
+    ).join('');
+
+    // Group filter select
+    const sel = document.getElementById('groupFilterSel');
+    const prevVal = sel.value;
+    sel.innerHTML = '<option value="all">TODOS OS GRUPOS</option>';
+    Object.entries(allGroups).forEach(([gid, label]) => {
+      const opt = document.createElement('option');
+      opt.value = gid;
+      if (gid.startsWith('_xlsx_')) {
+        opt.textContent = label; // already has 📊 prefix
+      } else if (gid.startsWith('_nogroupfile_')) {
+        opt.textContent = label.replace('_nogroupfile_','');
+      } else {
+        opt.textContent = `GID: ${gid}`;
+      }
+      sel.appendChild(opt);
+    });
+    if ([...sel.options].find(o => o.value === prevVal)) sel.value = prevVal;
+
+    const filterWrap = document.getElementById('importFilterWrap');
+    const btnImport = document.getElementById('btnImport');
+    if (importedFiles.length) {
+      filterWrap.style.display = Object.keys(allGroups).length > 1 ? 'flex' : 'none';
+      btnImport.style.display = 'block';
+    } else {
+      filterWrap.style.display = 'none';
+      btnImport.style.display = 'none';
+    }
+
+    applyGroupFilter();
+  }
+
+  function applyGroupFilter() {
+    const sel = document.getElementById('groupFilterSel');
+    const gid = sel.value;
+    let phones;
+    if (gid === 'all') {
+      phones = new Set();
+      Object.values(allExtracted).forEach(s => s.forEach(p => phones.add(p)));
+    } else {
+      phones = allExtracted[gid] || new Set();
+    }
+    const countEl = document.getElementById('importCount');
+    const total = [...Object.values(allExtracted)].reduce((acc, s) => { s.forEach(p => acc.add(p)); return acc; }, new Set()).size;
+    countEl.innerHTML = `<b>${phones.size}</b> número${phones.size!==1?'s':''} selecionado${phones.size!==1?'s':''} · <span class="warn">total: ${total}</span>`;
+  }
+
+  function importToArea() {
+    const sel = document.getElementById('groupFilterSel');
+    const gid = sel.value;
+    let phones;
+    if (gid === 'all') {
+      phones = new Set();
+      Object.values(allExtracted).forEach(s => s.forEach(p => phones.add(p)));
+    } else {
+      phones = allExtracted[gid] || new Set();
+    }
+    const area = document.getElementById('numbersArea');
+    const existing = area.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const existingSet = new Set(existing);
+    const toAdd = [...phones].filter(p => !existingSet.has(p));
+    area.value = [...existing, ...toAdd].join('\n');
+    // flash feedback
+    area.style.borderColor = 'var(--green)';
+    setTimeout(() => { area.style.borderColor = ''; }, 800);
+  }
+
+  function removeImportFile(name) {
+    importedFiles = importedFiles.filter(f => f.name !== name);
+    // Remove corresponding keys from allExtracted and allGroups
+    const keysToDelete = Object.keys(allGroups).filter(k =>
+      k === '_xlsx_' + name || k === '_nogroupfile_' + name
+    );
+    keysToDelete.forEach(k => { delete allExtracted[k]; delete allGroups[k]; });
+    // For records.html we can't easily isolate per-file groups, so rebuild if any html files remain
+    const htmlFiles = importedFiles.filter(f => !f.type || f.type === 'html');
+    if (!htmlFiles.length) {
+      // Remove all non-xlsx keys
+      Object.keys(allGroups).filter(k => !k.startsWith('_xlsx_')).forEach(k => {
+        delete allExtracted[k]; delete allGroups[k];
+      });
+    }
+    updateImportUI();
+    if (!importedFiles.length) document.getElementById('importCount').innerHTML = '';
+  }
+
+  // Drag-and-drop support for import area
+  const dropEl = document.getElementById('importDrop');
+  dropEl.addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('drag'); });
+  dropEl.addEventListener('dragleave', () => dropEl.classList.remove('drag'));
+  dropEl.addEventListener('drop', e => {
+    e.preventDefault();
+    dropEl.classList.remove('drag');
+    handleImportFiles(e.dataTransfer.files);
+  });
+
+
   async function pollStatus() {
     try {
       const r = await fetch('/api/status');
