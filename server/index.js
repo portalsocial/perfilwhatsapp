@@ -98,12 +98,21 @@ async function connectWhatsApp() {
 
         if (connection === 'close') {
           const code = lastDisconnect?.error?.output?.statusCode;
-          const loggedOut = code === DisconnectReason.loggedOut;
+
           connectionStatus = 'disconnected';
+
           console.log('[INTEL] Conexao encerrada. Codigo:', code);
 
-          if (loggedOut) {
-            try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (e) {}
+          const shouldClearSession =
+            code === DisconnectReason.loggedOut;
+
+          if (shouldClearSession) {
+            console.log('[INTEL] Sessao invalida. Limpando auth_info...');
+
+            try {
+              fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+            } catch (e) {}
+
             setTimeout(connectWhatsApp, 3000);
           } else {
             setTimeout(connectWhatsApp, 5000);
@@ -202,6 +211,22 @@ app.post('/api/photos/batch', async (req, res) => {
       let businessName = null;
       let businessCategory = null;
       let businessDescription = null;
+      let noWhatsApp = false;
+
+      // Verifica se o numero tem WhatsApp instalado
+      try {
+        const [waResult] = await sock.onWhatsApp(number);
+        if (!waResult || !waResult.exists) {
+          noWhatsApp = true;
+          result = { number: raw, photoUrl: null, about: null, found: false, noWhatsApp: true, isBusiness: false, businessName: null, businessCategory: null, businessDescription: null, index: i };
+          profileCache[number] = { ...result };
+          res.write(`data: ${JSON.stringify({ ...result, progress: i + 1, total: numbers.length })}
+
+`);
+          if (i < numbers.length - 1) await new Promise(r => setTimeout(r, 900 + Math.random() * 600));
+          continue;
+        }
+      } catch (e) {}
 
       try {
         const bizProfile = await sock.getBusinessProfile(jid);
@@ -258,8 +283,8 @@ app.post('/api/photos/batch', async (req, res) => {
         } catch (e) {}
       }
 
-      result = { number: raw, photoUrl, about, found, isBusiness, businessName, businessCategory, businessDescription, index: i };
-      profileCache[number] = { number: raw, photoUrl, about, found, isBusiness, businessName, businessCategory, businessDescription };
+      result = { number: raw, photoUrl, about, found, noWhatsApp, isBusiness, businessName, businessCategory, businessDescription, index: i };
+      profileCache[number] = { number: raw, photoUrl, about, found, noWhatsApp, isBusiness, businessName, businessCategory, businessDescription };
     }
 
     res.write(`data: ${JSON.stringify({ ...result, progress: i + 1, total: numbers.length })}\n\n`);

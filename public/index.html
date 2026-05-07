@@ -100,6 +100,9 @@
   .b-pub{color:var(--green);border-color:rgba(57,255,20,0.35);background:rgba(57,255,20,0.04);}
   .b-anon{color:var(--dim);border-color:rgba(74,96,112,0.3);}
   .b-none{color:var(--dim);border-color:rgba(74,96,112,0.2);opacity:0.5;}
+  .b-nowhats{color:#ff4444;border-color:rgba(255,68,68,0.4);}
+  .b-ativa{color:#39ff14;border-color:rgba(57,255,20,0.4);}
+  .b-inativa{color:#ff4444;border-color:rgba(255,68,68,0.4);}
   .card-idx{font-family:'Share Tech Mono',monospace;font-size:7px;color:var(--dim);}
   .empty{grid-column:1/-1;text-align:center;padding:70px 20px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:2px;line-height:2.4;}
   .empty-big{font-family:'Orbitron',monospace;font-size:10px;letter-spacing:4px;color:rgba(0,229,255,0.12);margin-bottom:10px;}
@@ -230,8 +233,9 @@
       <button class="tb active" onclick="setFilter('all',this)">TODOS</button>
       <button class="tb" onclick="setFilter('identificavel',this)">IDENTIFICÁVEIS</button>
       <button class="tb" onclick="setFilter('publica',this)">PÚBLICAS</button>
-      <button class="tb" onclick="setFilter('anonima',this)">ANÔNIMAS</button>
+      
       <button class="tb" onclick="setFilter('nophoto',this)">SEM FOTO</button>
+      <button class="tb" onclick="setFilter('nowhats',this)">INATIVAS</button>
     </div>
     <div class="grid" id="grid">
       <div class="empty">
@@ -281,7 +285,7 @@
       </div>
       <div id="mAbout" class="modal-about empty">—</div>
       <select id="mStatus" onchange="applyStatus()">
-        <option value="anonima">ANÔNIMA — Sem identificação visual</option>
+        
         <option value="publica">PÚBLICA — Foto visível, sem rosto claro</option>
         <option value="identificavel">IDENTIFICÁVEL — Rosto ou dado pessoal visível</option>
       </select>
@@ -652,6 +656,7 @@
           p.isBusiness = data.isBusiness || false;
           p.businessName = data.businessName || null;
           p.businessCategory = data.businessCategory || null;
+          p.noWhatsApp = data.noWhatsApp || false;
           p.loading = false;
         }
         const pct = Math.round((data.progress / data.total) * 100);
@@ -677,7 +682,8 @@
     const search = document.getElementById('searchBox').value.toLowerCase();
     const filtered = profiles.filter(p => {
       if (!p.number.toLowerCase().includes(search)) return false;
-      if (currentFilter === 'nophoto') return !p.photoUrl && !p.loading;
+      if (currentFilter === 'nophoto') return !p.photoUrl && !p.loading && !p.noWhatsApp;
+      if (currentFilter === 'nowhats') return p.noWhatsApp === true;
       if (currentFilter !== 'all') return p.status === currentFilter;
       return true;
     });
@@ -688,12 +694,12 @@
     grid.innerHTML = filtered.map((p, i) => {
       const gi = profiles.indexOf(p);
       const delay = (i * 0.03).toFixed(2);
-      const bClass = p.status==='identificavel'?'b-id':p.status==='publica'?'b-pub':p.found===false?'b-none':'b-anon';
-      const bLabel = p.status==='identificavel'?'IDENTIF.':p.status==='publica'?'PÚBLICA':p.found===false?'S/CONTA':'ANÔN.';
+      const bClass = p.status==='identificavel'?'b-id':p.status==='publica'?'b-pub':p.noWhatsApp?'b-inativa':'b-ativa';
+      const bLabel = p.status==='identificavel'?'IDENTIF.':p.status==='publica'?'PÚBLICA':p.noWhatsApp?'CONTA INATIVA':'CONTA ATIVA';
       let ph = '';
       if (p.loading) ph = `<div class="shimmer"></div>`;
       else if (p.photoUrl) ph = `<img src="${p.photoUrl}" alt="${p.number}" loading="lazy">`;
-      else ph = `<div class="nophoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>${p.found===false?'SEM CONTA':'SEM FOTO'}</div>`;
+      else ph = `<div class="nophoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>${p.noWhatsApp?'INATIVA':'ATIVA'}</div>`;
       return `<div class="card ${p.flagged?'flagged':''}" id="card-${gi}" style="animation-delay:${delay}s" onclick="openModal(${gi})">
         <div class="card-corner"></div>
         <div class="card-photo">${ph}
@@ -707,7 +713,7 @@
           ${p.isBusiness && p.businessName ? `<div class="biz-name">${p.businessName}</div>` : ''}
           <div class="card-num">${p.number}</div>
           <div class="card-row"><span class="badge ${bClass}">${bLabel}</span><span class="card-idx">#${String(p.index).padStart(3,'0')}</span></div>
-          <div class="card-about ${p.about?'has-text':''}">${p.about||(p.found?'recado padrão':'—')}</div>
+          <div class="card-about ${p.about?'has-text':''}">${p.about||'—'}</div>
         </div>
       </div>`;
     }).join('');
@@ -764,12 +770,32 @@
   function scrollToCard(idx) { document.getElementById(`card-${idx}`)?.scrollIntoView({behavior:'smooth',block:'center'}); }
 
   function clearAll() {
-    if (!profiles.length) return;
     if (confirm('Limpar todos os dados?')) {
+      // Limpa perfis e UI principal
       profiles = [];
       document.getElementById('numbersArea').value = '';
       document.getElementById('numList').innerHTML = '';
       document.getElementById('progWrap').classList.remove('on');
+      document.getElementById('progFill').style.width = '0%';
+      document.getElementById('progTxt').textContent = '0 / 0';
+
+      // Limpa sistema de importacao de arquivos
+      importedFiles = [];
+      allGroups = {};
+      if (typeof allExtracted !== 'undefined') {
+        Object.keys(allExtracted).forEach(k => delete allExtracted[k]);
+      }
+      document.getElementById('importCount').innerHTML = '';
+      document.getElementById('importFile').value = '';
+
+      // Limpa tags de arquivos importados
+      const tagsEl = document.getElementById('importTags');
+      if (tagsEl) tagsEl.innerHTML = '';
+
+      // Limpa filtros de grupo
+      const filterWrap = document.getElementById('filterWrap');
+      if (filterWrap) { filterWrap.innerHTML = ''; filterWrap.style.display = 'none'; }
+
       renderGrid(); updateStats();
       fetch('/api/cache/clear', { method: 'POST' });
     }
