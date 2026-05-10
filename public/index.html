@@ -136,6 +136,7 @@
   .mb-btn{width:100%;font-family:'Orbitron',monospace;font-size:8px;letter-spacing:2px;padding:8px;border:1px solid rgba(255,61,113,0.25);background:transparent;color:rgba(255,61,113,0.4);cursor:pointer;transition:all 0.2s;margin-top:4px;}
   .mb-btn:hover{border-color:var(--red);color:var(--red);background:rgba(255,61,113,0.05);}
 
+  .card-operadora{font-size:10px;color:#00e5ff;letter-spacing:1px;margin-top:3px;text-transform:uppercase;}
   .card-about{font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:italic;letter-spacing:0.5px;}
   .card-about.has-text{color:rgba(0,229,255,0.55);}
   .modal-about{font-family:'Share Tech Mono',monospace;font-size:11px;color:rgba(0,229,255,0.6);padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-left:2px solid var(--accent);margin-bottom:10px;font-style:italic;line-height:1.6;letter-spacing:0.5px;}
@@ -657,6 +658,7 @@
           p.businessName = data.businessName || null;
           p.businessCategory = data.businessCategory || null;
           p.noWhatsApp = data.noWhatsApp || false;
+          p.operadora = data.operadora || null;
           p.loading = false;
         }
         const pct = Math.round((data.progress / data.total) * 100);
@@ -715,6 +717,7 @@
           <div class="card-num">${p.number}</div>
           <div class="card-row"><span class="badge ${bClass}">${bLabel}</span><span class="card-idx">#${String(p.index).padStart(3,'0')}</span></div>
           <div class="card-about ${p.about?'has-text':''}">${p.about||'—'}</div>
+          ${p.operadora ? `<div class="card-operadora">📡 ${p.operadora}</div>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -902,7 +905,7 @@ ${imgData.map(p => {
       // PASSO 3: CSV completo
       const csv = ['Número,Foto,Status,Business,Nome Business,Recado,Marcado']
         .concat(profiles.map(p =>
-          `"${p.number}","${p.photoUrl?'SIM':'NÃO'}","${p.status}","${p.isBusiness?'SIM':'NÃO'}","${p.businessName||''}","${(p.about||'').replace(/"/g,"'")}","${p.flagged?'SIM':'NÃO'}"`
+          `"${p.number}","${p.photoUrl?'SIM':'NÃO'}","${p.status}","${p.isBusiness?'SIM':'NÃO'}","${p.businessName||''}","${(p.about||'').replace(/"/g,"'")}","${p.operadora||''}","${p.flagged?'SIM':'NÃO'}"`
         )).join('\n');
       zip.file('dados.csv', csv);
 
